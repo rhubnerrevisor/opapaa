@@ -5,14 +5,14 @@ const sql = neon(process.env.NEON_CONNECTION_STRING!);
 
 export async function GET() {
   try {
-    // total vendido: soma de (quantidade * preço) usando unit_price,
-    // caindo para price se unit_price estiver nulo.
     const [totais] = await sql/*sql*/`
       WITH vendido AS (
+        -- soma itens vendidos (usa unit_price; se for null, cai pra price)
         SELECT COALESCE(SUM(si.quantity * COALESCE(si.unit_price, si.price)), 0) AS total
         FROM sale_items si
       ),
       saidas AS (
+        -- soma saídas (centavos -> reais)
         SELECT COALESCE(SUM(co.amount_cents) / 100.0, 0) AS total
         FROM cash_outs co
       )
@@ -26,3 +26,4 @@ export async function GET() {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
+
