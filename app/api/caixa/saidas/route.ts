@@ -3,32 +3,37 @@ import { neon } from '@neondatabase/serverless';
 
 const sql = neon(process.env.NEON_CONNECTION_STRING!);
 
-// POST /api/caixa/saidas  -> { amount: number(em reais), reason: string }
+// POST /api/caixa/saidas  -> { amount: number | string, reason: string, kind?: 'entrada' | 'saida' }
 export async function POST(req: Request) {
   try {
-    const { amount, reason } = await req.json();
+    const body = await req.json();
+    const rawAmount = String(body?.amount ?? '').replace(',', '.');
+    const v = Number(rawAmount);
+    const kind: 'entrada' | 'saida' = (String(body?.kind || 'saida').toLowerCase() === 'entrada') ? 'entrada' : 'saida';
+    const reason = String(body?.reason ?? '').trim();
 
-    const v = Number(String(amount).replace(',', '.'));
-    if (!v || v <= 0 || !reason || !String(reason).trim()) {
-      return NextResponse.json(
-        { error: 'Informe valor (> 0) e motivo.' },
-        { status: 400 }
-      );
+    if (!v || v <= 0 || !reason) {
+      return NextResponse.json({ error: 'Informe valor (> 0) e motivo.' }, { status: 400 });
     }
 
     const amountCents = Math.round(v * 100);
+    const reasonStored = kind === 'entrada' ? `entrada: ${reason}` : reason;
 
     const rows = await sql/*sql*/`
       INSERT INTO cash_outs (amount_cents, reason)
-      VALUES (${amountCents}, ${String(reason).trim()})
+      VALUES (${amountCents}, ${reasonStored})
       RETURNING id, amount_cents, reason, created_at
     `;
 
     const r = rows[0];
+    const isEntrada = String(r.reason).toLowerCase().startsWith('entrada:');
+    const signedAmount = (Number(r.amount_cents) / 100) * (isEntrada ? 1 : -1);
+
     return NextResponse.json({
       id: r.id,
-      amount_cents: Number(r.amount_cents),
-      amount: Number(r.amount_cents) / 100,
+      kind: isEntrada ? 'entrada' : 'saida',
+      amount: signedAmount,
+      amount_cents: Number(r.amount_cents) * (isEntrada ? 1 : -1),
       reason: r.reason,
       created_at: r.created_at
     });
@@ -51,13 +56,18 @@ export async function GET(req: Request) {
     `;
 
     return NextResponse.json(
-      rows.map((r: any) => ({
-        id: r.id,
-        amount_cents: Number(r.amount_cents),
-        amount: Number(r.amount_cents) / 100,
-        reason: r.reason,
-        created_at: r.created_at
-      }))
+      rows.map((r: any) => {
+        const isEntrada = String(r.reason).toLowerCase().startsWith('entrada:');
+        const signedAmount = (Number(r.amount_cents) / 100) * (isEntrada ? 1 : -1);
+        return {
+          id: r.id,
+          kind: isEntrada ? 'entrada' : 'saida',
+          amount: signedAmount,
+          amount_cents: Number(r.amount_cents) * (isEntrada ? 1 : -1),
+          reason: r.reason,
+          created_at: r.created_at
+        };
+      })
     );
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
