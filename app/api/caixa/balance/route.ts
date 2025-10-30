@@ -5,25 +5,27 @@ const sql = neon(process.env.NEON_CONNECTION_STRING!);
 
 export async function GET() {
   try {
-    const [totais] = await sql/*sql*/`
+    const [r] = await sql/*sql*/`
       WITH vendido AS (
-        -- soma itens vendidos (usa unit_price; se for null, cai pra price)
         SELECT COALESCE(SUM(si.quantity * COALESCE(si.unit_price, si.price)), 0) AS total
         FROM sale_items si
       ),
-      saidas AS (
-        -- soma saídas (centavos -> reais)
-        SELECT COALESCE(SUM(co.amount_cents) / 100.0, 0) AS total
-        FROM cash_outs co
+      ajustes AS (
+        SELECT COALESCE(
+          SUM(
+            CASE
+              WHEN reason ILIKE 'entrada:%' THEN amount_cents
+              ELSE -amount_cents
+            END
+          ) / 100.0, 0
+        ) AS total
+        FROM cash_outs
       )
-      SELECT (vendido.total - saidas.total) AS saldo
-      FROM vendido, saidas;
+      SELECT (vendido.total + ajustes.total) AS saldo
+      FROM vendido, ajustes;
     `;
-
-    const saldo = Number(totais?.saldo ?? 0);
-    return NextResponse.json({ saldo });
+    return NextResponse.json({ saldo: Number(r?.saldo ?? 0) });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
-
